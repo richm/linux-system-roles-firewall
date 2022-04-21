@@ -321,106 +321,37 @@ def set_the_default_zone(fw, set_default_zone):
     fw.setDefaultZone(set_default_zone)
 
 
-def main():
-    module = AnsibleModule(
-        argument_spec=dict(
-            service=dict(required=False, type="list", elements="str", default=[]),
-            port=dict(required=False, type="list", elements="str", default=[]),
-            source_port=dict(required=False, type="list", elements="str", default=[]),
-            forward_port=dict(
-                required=False,
-                type="list",
-                elements="str",
-                default=[],
-                aliases=["port_forward"],
-                deprecated_aliases=[
-                    {
-                        "name": "port_forward",
-                        "date": "2021-09-23",
-                        "collection_name": "ansible.posix",
-                    },
-                ],
-            ),
-            masquerade=dict(required=False, type="bool", default=None),
-            previous=dict(choices=["replaced"], required=False),
-            rich_rule=dict(required=False, type="list", elements="str", default=[]),
-            source=dict(required=False, type="list", elements="str", default=[]),
-            interface=dict(required=False, type="list", elements="str", default=[]),
-            icmp_block=dict(required=False, type="list", elements="str", default=[]),
-            icmp_block_inversion=dict(required=False, type="bool", default=None),
-            timeout=dict(required=False, type="int", default=0),
-            target=dict(
-                required=False,
-                type="str",
-                choices=["default", "ACCEPT", "DROP", "%%REJECT%%"],
-                default=None,
-            ),
-            zone=dict(required=False, type="str", default=None),
-            set_default_zone=dict(required=False, type="str", default=None),
-            permanent=dict(required=False, type="bool", default=None),
-            runtime=dict(
-                required=False,
-                type="bool",
-                default=None,
-                aliases=["immediate"],
-                deprecated_aliases=[
-                    {
-                        "name": "immediate",
-                        "date": "2021-09-23",
-                        "collection_name": "ansible.posix",
-                    },
-                ],
-            ),
-            state=dict(
-                choices=["enabled", "disabled", "present", "absent"], required=True
-            ),
-        ),
-        supports_check_mode=True,
-        required_if=(
-            ("state", "present", ("zone", "target"), True),
-            ("state", "absent", ("zone", "target"), True),
-        ),
-    )
-
-    if not HAS_FIREWALLD:
-        module.fail_json(msg="No firewall backend could be imported.")
-
-    service = module.params["service"]
+def apply_params(module, fw, fw_offline, params):
+    service = params["service"]
     port = []
-    for port_proto in module.params["port"]:
+    for port_proto in params["port"]:
         port.append(parse_port(module, port_proto))
     source_port = []
-    for port_proto in module.params["source_port"]:
+    for port_proto in params["source_port"]:
         source_port.append(parse_port(module, port_proto))
     forward_port = []
-    for item in module.params["forward_port"]:
+    for item in params["forward_port"]:
         forward_port.append(parse_forward_port(module, item))
-    masquerade = module.params["masquerade"]
+    masquerade = params["masquerade"]
     rich_rule = []
-    for item in module.params["rich_rule"]:
+    for item in params["rich_rule"]:
         try:
             rule = str(Rich_Rule(rule_str=item))
             rich_rule.append(rule)
         except Exception as e:
             module.fail_json(msg="Rich Rule '%s' is not valid: %s" % (item, str(e)))
-    source = module.params["source"]
-    interface = module.params["interface"]
-    icmp_block = module.params["icmp_block"]
-    icmp_block_inversion = module.params["icmp_block_inversion"]
-    timeout = module.params["timeout"]
-    target = module.params["target"]
-    zone = module.params["zone"]
-    set_default_zone = module.params["set_default_zone"]
-    permanent = module.params["permanent"]
-    runtime = module.params["runtime"]
-    state = module.params["state"]
-    previous = module.params["previous"]
+    source = params["source"]
+    interface = params["interface"]
+    icmp_block = params["icmp_block"]
+    icmp_block_inversion = params["icmp_block_inversion"]
+    timeout = params["timeout"]
+    target = params["target"]
+    zone = params["zone"]
+    set_default_zone = params["set_default_zone"]
+    permanent = params["permanent"]
+    runtime = params["runtime"]
+    state = params["state"]
 
-    fw = FirewallClient()
-
-    previous_hashes = None
-    if previous:
-        previous_hashes = restore_defaults(fw)
     if permanent is None:
         runtime = True
     elif not any((permanent, runtime)):
@@ -445,14 +376,11 @@ def main():
             )
         )
     ):
-        if previous:
-            module.exit_json(changed=bool(previous_hashes))
-        else:
-            module.fail_json(
-                msg="One of service, port, source_port, forward_port, "
-                "masquerade, rich_rule, source, interface, icmp_block, "
-                "icmp_block_inversion, target, zone or set_default_zone needs to be set"
-            )
+        module.fail_json(
+            msg="One of service, port, source_port, forward_port, "
+            "masquerade, rich_rule, source, interface, icmp_block, "
+            "icmp_block_inversion, target, zone or set_default_zone needs to be set"
+        )
 
     zone_operation = False
     if state == "present" or state == "absent":
@@ -526,43 +454,10 @@ def main():
         module.fail_json(msg="source cannot be set without permanent")
 
 
-    fw_offline = False
-    if not fw.connected:
+    if fw_offline:
         # Firewalld is not currently running, permanent-only operations
-        fw_offline = True
         runtime = False
         permanent = True
-
-        # Pre-run version checking
-        if LooseVersion(FW_VERSION) < LooseVersion("0.3.9"):
-            module.fail_json(
-                msg="Unsupported firewalld version %s" " requires >= 0.3.9" % FW_VERSION
-            )
-
-        try:
-            from firewall.core.fw_test import Firewall_test
-
-            fw = Firewall_test()
-
-        except ImportError:
-            # In firewalld version 0.7.0 this behavior changed
-            from firewall.core.fw import Firewall
-
-            fw = Firewall(offline=True)
-
-        fw.start()
-    else:
-        # Pre-run version checking
-        if LooseVersion(FW_VERSION) < LooseVersion("0.2.11"):
-            module.fail_json(
-                msg="Unsupported firewalld version %s, requires >= 0.2.11" % FW_VERSION
-            )
-
-        # Set exception handler
-        def exception_handler(exception_message):
-            module.fail_json(msg=exception_message)
-
-        fw.setExceptionHandler(exception_handler)
 
     # Get default zone, the permanent zone and settings
     fw_zone = None
@@ -595,6 +490,7 @@ def main():
             zone = zone or fw.getDefaultZone()
             fw_zone = fw.config().getZoneByName(zone)
             fw_settings = fw_zone.getSettings()
+
     # Firewall modification starts here
 
     changed = False
@@ -871,9 +767,144 @@ def main():
         if need_reload:
             fw.reload()
 
+    return changed
+
+
+def main():
+    module = AnsibleModule(
+        argument_spec=dict(
+            type="list",
+            elements="dict",
+            options=dict(
+                service=dict(required=False, type="list", elements="str", default=[]),
+                port=dict(required=False, type="list", elements="str", default=[]),
+                source_port=dict(required=False, type="list", elements="str", default=[]),
+                forward_port=dict(
+                    required=False,
+                    type="list",
+                    elements="str",
+                    default=[],
+                    aliases=["port_forward"],
+                    deprecated_aliases=[
+                        {
+                            "name": "port_forward",
+                            "date": "2021-09-23",
+                            "collection_name": "ansible.posix",
+                        },
+                    ],
+                ),
+                masquerade=dict(required=False, type="bool", default=None),
+                previous=dict(choices=["replaced"], required=False),
+                rich_rule=dict(required=False, type="list", elements="str", default=[]),
+                source=dict(required=False, type="list", elements="str", default=[]),
+                interface=dict(required=False, type="list", elements="str", default=[]),
+                icmp_block=dict(required=False, type="list", elements="str", default=[]),
+                icmp_block_inversion=dict(required=False, type="bool", default=None),
+                timeout=dict(required=False, type="int", default=0),
+                target=dict(
+                    required=False,
+                    type="str",
+                    choices=["default", "ACCEPT", "DROP", "%%REJECT%%"],
+                    default=None,
+                ),
+                zone=dict(required=False, type="str", default=None),
+                set_default_zone=dict(required=False, type="str", default=None),
+                permanent=dict(required=False, type="bool", default=None),
+                runtime=dict(
+                    required=False,
+                    type="bool",
+                    default=None,
+                    aliases=["immediate"],
+                    deprecated_aliases=[
+                        {
+                            "name": "immediate",
+                            "date": "2021-09-23",
+                            "collection_name": "ansible.posix",
+                        },
+                    ],
+                ),
+                state=dict(
+                    choices=["enabled", "disabled", "present", "absent"], required=True
+                ),
+            ),
+            required_if=(
+                ("state", "present", ("zone", "target"), True),
+                ("state", "absent", ("zone", "target"), True),
+            ),
+        ),
+        supports_check_mode=True,
+    )
+
+    if not HAS_FIREWALLD:
+        module.fail_json(msg="No firewall backend could be imported.")
+
+    fw = FirewallClient()
+
+    fw_offline = False
+    if not fw.connected:
+        # Firewalld is not currently running, permanent-only operations
+        fw_offline = True
+
+        # Pre-run version checking
+        if LooseVersion(FW_VERSION) < LooseVersion("0.3.9"):
+            module.fail_json(
+                msg="Unsupported firewalld version %s" " requires >= 0.3.9" % FW_VERSION
+            )
+
+        try:
+            from firewall.core.fw_test import Firewall_test
+
+            fw = Firewall_test()
+
+        except ImportError:
+            # In firewalld version 0.7.0 this behavior changed
+            from firewall.core.fw import Firewall
+
+            fw = Firewall(offline=True)
+
+        fw.start()
+    else:
+        # Pre-run version checking
+        if LooseVersion(FW_VERSION) < LooseVersion("0.2.11"):
+            module.fail_json(
+                msg="Unsupported firewalld version %s, requires >= 0.2.11" % FW_VERSION
+            )
+
+        # Set exception handler
+        def exception_handler(exception_message):
+            module.fail_json(msg=exception_message)
+
+        fw.setExceptionHandler(exception_handler)
+
+    # see if previous: replaced is set in any of the params
+    previous = False
+    module_params = []
+    for params in module.params:
+        if "previous" in params:
+            if previous:
+                module.fail_json(msg="Must specify previous: replaced only once")
+            previous = True
+            del params["previous"]
+            if params:
+                module_params.append(params)
+        else:
+            module_params.append(params)
+    previous_hashes = None
     if previous:
-        current_hashes = get_hashes_of_all_configs()
-        changed = current_hashes != previous_hashes
+        previous_hashes = restore_defaults(fw)
+
+    changed = False
+    for params in module_params:
+        if apply_params(module, fw, fw_offline, params):
+            changed = True
+
+    if previous:
+        if changed:  # some configs were applied
+            current_hashes = get_hashes_of_all_configs()
+            changed = current_hashes != previous_hashes
+        else:  # no configs were applied - only previous: replaced
+            changed = bool(previous_hashes)
+
     module.exit_json(changed=changed)
 
 

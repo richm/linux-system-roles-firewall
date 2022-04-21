@@ -248,13 +248,19 @@ class MockException(Exception):
 class MockAnsibleModule(MagicMock):
     def __call__(self, **kwargs):
         am = self.return_value
-        am.call_params = {}
-        if not isinstance(am.params, dict):
-            am.params = {}
-        for kk, vv in kwargs["argument_spec"].items():
-            am.call_params[kk] = vv.get("default")
-            if kk not in am.params:
-                am.params[kk] = am.call_params[kk]
+        am.call_params = [{}]
+        if not isinstance(am.params, list):
+            am.params = [{}]
+        for kk, vv in kwargs["argument_spec"]["options"].items():
+            if "default" in vv:
+                am.call_params[0][kk] = vv["default"]
+            elif vv.get("required"):
+                if "choices" in vv:
+                    am.call_params[0][kk] = vv["choices"][0]
+                else:
+                    am.call_params[0][kk] = None
+            if kk in am.call_params[0] and kk not in am.params[0]:
+                am.params[0][kk] = am.call_params[0][kk]
         am.supports_check_mode = kwargs["supports_check_mode"]
         am.fail_json = Mock(side_effect=MockException())
         am.exit_json = Mock()
@@ -376,6 +382,7 @@ class FirewallLibMain(unittest.TestCase):
 
     @patch("firewall_lib.FirewallClient", MagicMock, create=True)
     @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.8", create=True)
     def test_main_error_no_params(self, am_class):
         with self.assertRaises(MockException):
             firewall_lib.main()
@@ -387,9 +394,10 @@ class FirewallLibMain(unittest.TestCase):
 
     @patch("firewall_lib.FirewallClient", MagicMock, create=True)
     @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.8", create=True)
     def test_main_error_timeout_icmp_block_inversion(self, am_class):
         am = am_class.return_value
-        am.params = {"icmp_block_inversion": True, "timeout": 1}
+        am.params = [{"icmp_block_inversion": True, "timeout": 1}]
         with self.assertRaises(MockException):
             firewall_lib.main()
         am.fail_json.assert_called_with(
@@ -398,31 +406,34 @@ class FirewallLibMain(unittest.TestCase):
 
     @patch("firewall_lib.FirewallClient", MagicMock, create=True)
     @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.8", create=True)
     def test_main_error_timeout_source(self, am_class):
         am = am_class.return_value
-        am.params = {"source": ["192.0.2.0/24"], "timeout": 1}
+        am.params = [{"source": ["192.0.2.0/24"], "timeout": 1}]
         with self.assertRaises(MockException):
             firewall_lib.main()
         am.fail_json.assert_called_with(msg="timeout can not be used with source only")
 
     @patch("firewall_lib.FirewallClient", MagicMock, create=True)
     @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.8", create=True)
     def test_main_error_source_without_permanent(self, am_class):
         am = am_class.return_value
-        am.params = {"source": ["192.0.2.0/24"]}
+        am.params = [{"source": ["192.0.2.0/24"]}]
         with self.assertRaises(MockException):
             firewall_lib.main()
         am.fail_json.assert_called_with(msg="source cannot be set without permanent")
 
     @patch("firewall_lib.FirewallClient", MagicMock, create=True)
     @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.8", create=True)
     def test_permanent_runtime_offline(self, am_class):
         am = am_class.return_value
-        am.params = {
+        am.params = [{
             "icmp_block_inversion": True,
             "permanent": False,
             "runtime": False,
-        }
+        }]
         with self.assertRaises(MockException):
             firewall_lib.main()
         am.fail_json.assert_called_with(
@@ -431,9 +442,10 @@ class FirewallLibMain(unittest.TestCase):
 
     @patch("firewall_lib.FirewallClient", MagicMock, create=True)
     @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.8", create=True)
     def test_timeout_with_disabled_state(self, am_class):
         am = am_class.return_value
-        am.params = {"source": ["192.0.2.0/24"], "state": "disabled", "timeout": 1}
+        am.params = [{"source": ["192.0.2.0/24"], "state": "disabled", "timeout": 1}]
         with self.assertRaises(MockException):
             firewall_lib.main()
         am.fail_json.assert_called_with(
@@ -442,13 +454,14 @@ class FirewallLibMain(unittest.TestCase):
 
     @patch("firewall_lib.FirewallClient", MagicMock, create=True)
     @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.8", create=True)
     def test_masquerade_with_disabled_state(self, am_class):
         am = am_class.return_value
-        am.params = {
+        am.params = [{
             "source": ["192.0.2.0/24"],
             "state": "disabled",
             "masquerade": True,
-        }
+        }]
         with self.assertRaises(MockException):
             firewall_lib.main()
         am.fail_json.assert_called_with(
@@ -457,13 +470,14 @@ class FirewallLibMain(unittest.TestCase):
 
     @patch("firewall_lib.FirewallClient", MagicMock, create=True)
     @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.8", create=True)
     def test_icmp_block_inversion_with_disabled_state(self, am_class):
         am = am_class.return_value
-        am.params = {
+        am.params = [{
             "source": ["192.0.2.0/24"],
             "state": "disabled",
             "icmp_block_inversion": True,
-        }
+        }]
         with self.assertRaises(MockException):
             firewall_lib.main()
         am.fail_json.assert_called_with(
@@ -472,9 +486,10 @@ class FirewallLibMain(unittest.TestCase):
 
     @patch("firewall_lib.FirewallClient", MagicMock, create=True)
     @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.8", create=True)
     def test_main_error_timeout_interface(self, am_class):
         am = am_class.return_value
-        am.params = {"interface": ["eth2"], "timeout": 1}
+        am.params = [{"interface": ["eth2"], "timeout": 1}]
         with self.assertRaises(MockException):
             firewall_lib.main()
         am.fail_json.assert_called_with(
@@ -483,9 +498,10 @@ class FirewallLibMain(unittest.TestCase):
 
     @patch("firewall_lib.FirewallClient", MagicMock, create=True)
     @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.8", create=True)
     def test_main_error_timeout_target(self, am_class):
         am = am_class.return_value
-        am.params = {"timeout": 1, "target": ""}
+        am.params = [{"timeout": 1, "target": ""}]
         with self.assertRaises(MockException):
             firewall_lib.main()
         am.fail_json.assert_called_with(msg="timeout can not be used with target only")
@@ -495,10 +511,10 @@ class FirewallLibMain(unittest.TestCase):
     @patch("firewall_lib.FW_VERSION", "0.3.8", create=True)
     def test_firewalld_offline_version_disconnected(self, firewall_class, am_class):
         am = am_class.return_value
-        am.params = {
+        am.params = [{
             "icmp_block_inversion": True,
             "permanent": True,
-        }
+        }]
         fw = firewall_class.return_value
         fw.connected = False
         with self.assertRaises(MockException):
@@ -512,10 +528,10 @@ class FirewallLibMain(unittest.TestCase):
     @patch("firewall_lib.FW_VERSION", "0.2.8", create=True)
     def test_firewalld_offline_version_connected(self, firewall_class, am_class):
         am = am_class.return_value
-        am.params = {
+        am.params = [{
             "icmp_block_inversion": True,
             "permanent": True,
-        }
+        }]
         fw = firewall_class.return_value
         fw.connected = True
         with self.assertRaises(MockException):
@@ -529,9 +545,9 @@ class FirewallLibMain(unittest.TestCase):
     @patch("firewall_lib.FW_VERSION", "0.3.8", create=True)
     def test_set_default_zone(self, firewall_class, am_class):
         am = am_class.return_value
-        am.params = {
+        am.params = [{
             "set_default_zone": "public",
-        }
+        }]
         fw = firewall_class.return_value
         fw.connected = True
         firewall_lib = Mock()
@@ -562,13 +578,13 @@ def test_module_parameters(method, state, input, expected):
         am = am_class.return_value
         permanent = "permanent" in expected
         runtime = "runtime" in expected
-        am.params = {
+        am.params = [{
             "permanent": permanent,
             "state": params_state,
             "runtime": runtime,
             "timeout": 0,
-        }
-        am.params.update(input)
+        }]
+        am.params[0].update(input)
         if "called_mock_name" in expected:
             called_mock_name = expected["called_mock_name"]
         elif state == "enabled":
